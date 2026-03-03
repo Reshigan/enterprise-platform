@@ -10,6 +10,8 @@ export interface Contact {
   status: 'active' | 'inactive' | 'lead';
   createdAt: string;
   lastContact: string;
+  score: number;
+  source: string;
 }
 
 export interface Deal {
@@ -24,6 +26,18 @@ export interface Deal {
   description: string;
   createdAt: string;
   assignedTo: string;
+  score: number;
+  stageHistory: StageChange[];
+  nextAction: string;
+  nextActionDate: string;
+  lostReason?: string;
+}
+
+export interface StageChange {
+  from: DealStage;
+  to: DealStage;
+  date: string;
+  daysInStage: number;
 }
 
 export type DealStage = 'prospect' | 'qualified' | 'proposal' | 'negotiation' | 'closed_won' | 'closed_lost';
@@ -38,6 +52,9 @@ export interface Product {
   description: string;
   sku: string;
   active: boolean;
+  costPrice: number;
+  margin: number;
+  salesCount: number;
 }
 
 export interface Invoice {
@@ -53,6 +70,9 @@ export interface Invoice {
   status: 'draft' | 'sent' | 'paid' | 'overdue';
   issueDate: string;
   dueDate: string;
+  paidDate?: string;
+  notes: string;
+  paymentMethod?: string;
 }
 
 export interface InvoiceItem {
@@ -74,16 +94,33 @@ export interface TeamMember {
   activitiesCount: number;
   commissionRate: number;
   commissionEarned: number;
+  quota: number;
+  quotaAttainment: number;
+  avgDealCycle: number;
 }
 
 export interface Activity {
   id: string;
-  type: 'call' | 'email' | 'meeting' | 'note' | 'deal_won' | 'deal_lost' | 'invoice_sent' | 'contact_added';
+  type: 'call' | 'email' | 'meeting' | 'note' | 'deal_won' | 'deal_lost' | 'invoice_sent' | 'contact_added' | 'stage_change' | 'task';
   description: string;
   userId: string;
   userName: string;
   timestamp: string;
   relatedId?: string;
+  relatedType?: 'contact' | 'deal' | 'invoice' | 'product';
+  metadata?: Record<string, string>;
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  entity: string;
+  entityId: string;
+  entityName: string;
+  userId: string;
+  userName: string;
+  timestamp: string;
+  changes: string;
 }
 
 export interface CompanySettings {
@@ -94,4 +131,15 @@ export interface CompanySettings {
   taxRate: number;
   currency: string;
   logo: string;
+  fiscalYearStart: string;
+  defaultPaymentTerms: number;
+}
+
+export interface PipelineMetrics {
+  avgDealSize: number;
+  avgCycleDays: number;
+  velocityScore: number;
+  conversionByStage: Record<DealStage, number>;
+  totalPipelineValue: number;
+  weightedPipeline: number;
 }

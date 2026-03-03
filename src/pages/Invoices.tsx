@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../stores/useStore';
 import { formatCurrency, formatDate } from '../lib/utils';
-import { Plus, X, Eye, Trash2, Send, CheckCircle } from 'lucide-react';
+import { Plus, X, Eye, Trash2, Send, CheckCircle, Clock, CreditCard, AlertTriangle, DollarSign } from 'lucide-react';
 import { Invoice, InvoiceItem } from '../types';
 
 function InvoicePreview({ invoice, settings, onClose }: { invoice: Invoice; settings: { name: string; email: string; address: string; taxRate: number }; onClose: () => void }) {
@@ -20,11 +20,20 @@ function InvoicePreview({ invoice, settings, onClose }: { invoice: Invoice; sett
               <p className="text-sm text-gray-600">{invoice.number}</p>
               <p className="text-sm text-gray-500">Date: {formatDate(invoice.issueDate)}</p>
               <p className="text-sm text-gray-500">Due: {formatDate(invoice.dueDate)}</p>
+              {invoice.paidDate && <p className="text-sm text-green-600 font-medium">Paid: {formatDate(invoice.paidDate)}</p>}
             </div>
           </div>
-          <div className="mb-6">
-            <p className="text-sm font-medium text-gray-700">Bill To:</p>
-            <p className="text-sm text-gray-900 font-semibold">{invoice.contactName}</p>
+          <div className="mb-6 flex justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Bill To:</p>
+              <p className="text-sm text-gray-900 font-semibold">{invoice.contactName}</p>
+            </div>
+            {invoice.paymentMethod && (
+              <div className="text-right">
+                <p className="text-sm font-medium text-gray-700">Payment Method:</p>
+                <p className="text-sm text-gray-900">{invoice.paymentMethod}</p>
+              </div>
+            )}
           </div>
           <table className="w-full mb-6">
             <thead>
@@ -68,7 +77,7 @@ function InvoiceModal({ invoice, contacts, deals, taxRate, onClose, onSave }: {
 }) {
   const [form, setForm] = useState<Partial<Invoice>>(invoice || {
     dealId: '', contactId: '', contactName: '', items: [{ id: '1', description: '', quantity: 1, unitPrice: 0, total: 0 }],
-    subtotal: 0, tax: 0, total: 0, status: 'draft', issueDate: new Date().toISOString().slice(0, 10), dueDate: '',
+    subtotal: 0, tax: 0, total: 0, status: 'draft', issueDate: new Date().toISOString().slice(0, 10), dueDate: '', paymentMethod: 'Wire Transfer',
   });
 
   const recalc = (items: InvoiceItem[]) => {
@@ -125,7 +134,7 @@ function InvoiceModal({ invoice, contacts, deals, taxRate, onClose, onSave }: {
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs text-slate-400 mb-1">Issue Date</label>
               <input type="date" value={form.issueDate || ''} onChange={e => setForm({ ...form, issueDate: e.target.value })}
@@ -135,6 +144,13 @@ function InvoiceModal({ invoice, contacts, deals, taxRate, onClose, onSave }: {
               <label className="block text-xs text-slate-400 mb-1">Due Date</label>
               <input type="date" value={form.dueDate || ''} onChange={e => setForm({ ...form, dueDate: e.target.value })}
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-sm text-white focus:border-blue-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Payment Method</label>
+              <select value={form.paymentMethod || ''} onChange={e => setForm({ ...form, paymentMethod: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-sm text-white focus:border-blue-500 focus:outline-none">
+                <option value="Wire Transfer">Wire Transfer</option><option value="Credit Card">Credit Card</option><option value="ACH">ACH</option><option value="Check">Check</option><option value="PayPal">PayPal</option>
+              </select>
             </div>
           </div>
 
@@ -173,6 +189,7 @@ function InvoiceModal({ invoice, contacts, deals, taxRate, onClose, onSave }: {
 }
 
 const statusColors: Record<string, string> = { draft: 'bg-slate-500/20 text-slate-300', sent: 'bg-blue-500/20 text-blue-300', paid: 'bg-green-500/20 text-green-300', overdue: 'bg-red-500/20 text-red-300' };
+const paymentMethodIcons: Record<string, string> = { 'Wire Transfer': 'text-blue-400', 'Credit Card': 'text-purple-400', 'ACH': 'text-green-400', 'Check': 'text-amber-400', 'PayPal': 'text-blue-300' };
 
 export default function Invoices() {
   const { invoices, contacts, deals, settings, addInvoice, updateInvoice, deleteInvoice } = useStore();
@@ -190,6 +207,28 @@ export default function Invoices() {
   const totalPaid = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + i.total, 0);
   const totalPending = invoices.filter(i => i.status === 'sent').reduce((s, i) => s + i.total, 0);
   const totalOverdue = invoices.filter(i => i.status === 'overdue').reduce((s, i) => s + i.total, 0);
+  const totalDraft = invoices.filter(i => i.status === 'draft').reduce((s, i) => s + i.total, 0);
+
+  // Days to payment calculation for paid invoices
+  const paidInvoices = invoices.filter(i => i.status === 'paid' && i.paidDate);
+  const avgDaysToPayment = paidInvoices.length > 0
+    ? Math.round(paidInvoices.reduce((s, i) => {
+        const issue = new Date(i.issueDate).getTime();
+        const paid = new Date(i.paidDate!).getTime();
+        return s + (paid - issue) / 86400000;
+      }, 0) / paidInvoices.length)
+    : 0;
+
+  // Aging for sent/overdue invoices
+  const agingData = invoices
+    .filter(i => i.status === 'sent' || i.status === 'overdue')
+    .map(i => {
+      const due = new Date(i.dueDate).getTime();
+      const now = Date.now();
+      const daysOverdue = Math.round((now - due) / 86400000);
+      return { ...i, daysOverdue };
+    })
+    .sort((a, b) => b.daysOverdue - a.daysOverdue);
 
   return (
     <div className="space-y-6">
@@ -198,21 +237,57 @@ export default function Invoices() {
         <button onClick={() => { setEditInvoice(null); setShowModal(true); }} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-sm text-white rounded-lg flex items-center gap-2"><Plus size={16} /> Create Invoice</button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-          <p className="text-xs text-slate-400 mb-1">Paid</p>
+          <div className="flex items-center gap-2 mb-1"><CheckCircle size={14} className="text-green-400" /><span className="text-xs text-slate-400">Paid</span></div>
           <p className="text-xl font-bold text-green-400">{formatCurrency(totalPaid)}</p>
         </div>
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-          <p className="text-xs text-slate-400 mb-1">Pending</p>
+          <div className="flex items-center gap-2 mb-1"><Send size={14} className="text-blue-400" /><span className="text-xs text-slate-400">Pending</span></div>
           <p className="text-xl font-bold text-blue-400">{formatCurrency(totalPending)}</p>
         </div>
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-          <p className="text-xs text-slate-400 mb-1">Overdue</p>
+          <div className="flex items-center gap-2 mb-1"><AlertTriangle size={14} className="text-red-400" /><span className="text-xs text-slate-400">Overdue</span></div>
           <p className="text-xl font-bold text-red-400">{formatCurrency(totalOverdue)}</p>
+        </div>
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+          <div className="flex items-center gap-2 mb-1"><DollarSign size={14} className="text-slate-400" /><span className="text-xs text-slate-400">Draft</span></div>
+          <p className="text-xl font-bold text-slate-300">{formatCurrency(totalDraft)}</p>
+        </div>
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+          <div className="flex items-center gap-2 mb-1"><Clock size={14} className="text-amber-400" /><span className="text-xs text-slate-400">Avg Days to Pay</span></div>
+          <p className="text-xl font-bold text-amber-400">{avgDaysToPayment}<span className="text-xs text-slate-500 ml-1">days</span></p>
         </div>
       </div>
 
+      {/* Aging Report */}
+      {agingData.length > 0 && (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+          <h3 className="text-sm font-semibold text-white mb-3">Invoice Aging Report</h3>
+          <div className="space-y-2">
+            {agingData.map(inv => (
+              <div key={inv.id} className="flex items-center gap-4 p-3 bg-slate-900/50 rounded-lg">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-white">{inv.number} - {inv.contactName}</p>
+                  <p className="text-xs text-slate-400">Due: {formatDate(inv.dueDate)}</p>
+                </div>
+                <span className="text-sm font-bold text-blue-400">{formatCurrency(inv.total)}</span>
+                <span className={`text-xs font-bold px-2 py-1 rounded ${inv.daysOverdue > 0 ? 'text-red-400 bg-red-500/20' : 'text-green-400 bg-green-500/20'}`}>
+                  {inv.daysOverdue > 0 ? `${inv.daysOverdue}d overdue` : `${Math.abs(inv.daysOverdue)}d remaining`}
+                </span>
+                {inv.paymentMethod && (
+                  <span className={`text-xs flex items-center gap-1 ${paymentMethodIcons[inv.paymentMethod] || 'text-slate-400'}`}>
+                    <CreditCard size={12} /> {inv.paymentMethod}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Invoice Table */}
       <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
         <table className="w-full">
           <thead>
@@ -221,37 +296,94 @@ export default function Invoices() {
               <th className="text-left text-xs font-medium text-slate-400 px-4 py-3">Client</th>
               <th className="text-left text-xs font-medium text-slate-400 px-4 py-3">Date</th>
               <th className="text-left text-xs font-medium text-slate-400 px-4 py-3">Due</th>
+              <th className="text-left text-xs font-medium text-slate-400 px-4 py-3">Payment</th>
               <th className="text-left text-xs font-medium text-slate-400 px-4 py-3">Status</th>
               <th className="text-right text-xs font-medium text-slate-400 px-4 py-3">Total</th>
               <th className="text-right text-xs font-medium text-slate-400 px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {invoices.map(inv => (
-              <tr key={inv.id} className="border-b border-slate-700/50 hover:bg-slate-700/30">
-                <td className="px-4 py-3 text-sm font-medium text-white">{inv.number}</td>
-                <td className="px-4 py-3 text-sm text-slate-300">{inv.contactName}</td>
-                <td className="px-4 py-3 text-sm text-slate-400">{formatDate(inv.issueDate)}</td>
-                <td className="px-4 py-3 text-sm text-slate-400">{formatDate(inv.dueDate)}</td>
-                <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors[inv.status]}`}>{inv.status}</span></td>
-                <td className="px-4 py-3 text-sm font-semibold text-right text-blue-400">{formatCurrency(inv.total)}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-1">
-                    <button onClick={() => setPreviewInvoice(inv)} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded" title="Preview"><Eye size={14} /></button>
-                    {inv.status === 'draft' && (
-                      <button onClick={() => updateInvoice(inv.id, { status: 'sent' })} className="p-1.5 text-slate-400 hover:text-blue-400 hover:bg-slate-700 rounded" title="Send"><Send size={14} /></button>
+            {invoices.map(inv => {
+              const dueDate = new Date(inv.dueDate).getTime();
+              const daysUntilDue = Math.round((dueDate - Date.now()) / 86400000);
+              return (
+                <tr key={inv.id} className="border-b border-slate-700/50 hover:bg-slate-700/30">
+                  <td className="px-4 py-3 text-sm font-medium text-white">{inv.number}</td>
+                  <td className="px-4 py-3 text-sm text-slate-300">{inv.contactName}</td>
+                  <td className="px-4 py-3 text-sm text-slate-400">{formatDate(inv.issueDate)}</td>
+                  <td className="px-4 py-3">
+                    <span className="text-sm text-slate-400">{formatDate(inv.dueDate)}</span>
+                    {inv.status !== 'paid' && inv.status !== 'draft' && (
+                      <span className={`ml-2 text-xs font-medium ${daysUntilDue < 0 ? 'text-red-400' : daysUntilDue < 7 ? 'text-amber-400' : 'text-slate-500'}`}>
+                        ({daysUntilDue < 0 ? `${Math.abs(daysUntilDue)}d late` : `${daysUntilDue}d left`})
+                      </span>
                     )}
-                    {inv.status === 'sent' && (
-                      <button onClick={() => updateInvoice(inv.id, { status: 'paid' })} className="p-1.5 text-slate-400 hover:text-green-400 hover:bg-slate-700 rounded" title="Mark Paid"><CheckCircle size={14} /></button>
+                  </td>
+                  <td className="px-4 py-3">
+                    {inv.paymentMethod && (
+                      <span className={`text-xs flex items-center gap-1 ${paymentMethodIcons[inv.paymentMethod] || 'text-slate-400'}`}>
+                        <CreditCard size={12} /> {inv.paymentMethod}
+                      </span>
                     )}
-                    <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded"><Trash2 size={14} /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors[inv.status]}`}>{inv.status}</span>
+                    {inv.paidDate && <span className="ml-1 text-xs text-slate-500">{formatDate(inv.paidDate)}</span>}
+                  </td>
+                  <td className="px-4 py-3 text-sm font-semibold text-right text-blue-400">{formatCurrency(inv.total)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => setPreviewInvoice(inv)} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded" title="Preview"><Eye size={14} /></button>
+                      {inv.status === 'draft' && (
+                        <button onClick={() => updateInvoice(inv.id, { status: 'sent' })} className="p-1.5 text-slate-400 hover:text-blue-400 hover:bg-slate-700 rounded" title="Send"><Send size={14} /></button>
+                      )}
+                      {inv.status === 'sent' && (
+                        <button onClick={() => updateInvoice(inv.id, { status: 'paid', paidDate: new Date().toISOString().slice(0, 10) })} className="p-1.5 text-slate-400 hover:text-green-400 hover:bg-slate-700 rounded" title="Mark Paid"><CheckCircle size={14} /></button>
+                      )}
+                      <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded"><Trash2 size={14} /></button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {invoices.length === 0 && <p className="text-center text-slate-500 py-12">No invoices yet</p>}
+      </div>
+
+      {/* Payment Timeline */}
+      <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+        <h3 className="text-sm font-semibold text-white mb-3">Payment Timeline</h3>
+        <div className="space-y-3">
+          {invoices.map(inv => {
+            const steps = [
+              { label: 'Created', date: inv.issueDate, done: true },
+              { label: 'Sent', date: inv.status !== 'draft' ? inv.issueDate : null, done: inv.status !== 'draft' },
+              { label: 'Due', date: inv.dueDate, done: inv.status === 'paid' },
+              { label: 'Paid', date: inv.paidDate || null, done: inv.status === 'paid' },
+            ];
+            return (
+              <div key={inv.id} className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg">
+                <div className="w-28 shrink-0">
+                  <p className="text-xs font-medium text-white">{inv.number}</p>
+                  <p className="text-xs text-slate-500">{formatCurrency(inv.total)}</p>
+                </div>
+                <div className="flex items-center gap-1 flex-1">
+                  {steps.map((step, i) => (
+                    <div key={i} className="flex items-center gap-1 flex-1">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${step.done ? 'bg-green-500' : 'bg-slate-600'}`} />
+                      <div className="flex-1">
+                        <p className={`text-xs ${step.done ? 'text-green-400' : 'text-slate-500'}`}>{step.label}</p>
+                        {step.date && <p className="text-xs text-slate-600">{formatDate(step.date)}</p>}
+                      </div>
+                      {i < steps.length - 1 && <div className={`h-px flex-1 ${step.done ? 'bg-green-500/50' : 'bg-slate-700'}`} />}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {showModal && (

@@ -1,13 +1,12 @@
 import { useState, useMemo } from 'react';
 import { useStore } from '../stores/useStore';
 import { formatCurrency } from '../lib/utils';
-import { Calendar, Download, Trophy, TrendingUp, TrendingDown, Target } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, CartesianGrid, Legend } from 'recharts';
-
-const COLORS = ['#3b82f6', '#8b5cf6', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
+import { Calendar, Download, Trophy, TrendingUp, TrendingDown, Target, AlertTriangle, Clock } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend } from 'recharts';
+import { DealStage } from '../types';
 
 export default function Reports() {
-  const { deals, contacts, team, invoices, activities } = useStore();
+  const { deals, team } = useStore();
   const [dateRange, setDateRange] = useState({ from: '2025-01-01', to: '2026-12-31' });
 
   const filteredDeals = useMemo(() =>
@@ -28,6 +27,34 @@ export default function Reports() {
 
   // Sales Forecasting (weighted by probability)
   const forecast = activeDeals.reduce((s, d) => s + d.value * d.probability / 100, 0);
+
+  // Pipeline Velocity Analysis by Stage
+  const velocityByStage = useMemo(() => {
+    const stageKeys: DealStage[] = ['prospect', 'qualified', 'proposal', 'negotiation'];
+    return stageKeys.map(stageKey => {
+      const changes = deals.flatMap(d => d.stageHistory).filter(h => h.from === stageKey);
+      const avgDays = changes.length > 0 ? Math.round(changes.reduce((s, h) => s + h.daysInStage, 0) / changes.length) : 0;
+      const isBottleneck = avgDays > 20;
+      return { stage: stageKey.charAt(0).toUpperCase() + stageKey.slice(1), avgDays, count: changes.length, isBottleneck };
+    });
+  }, [deals]);
+
+  // Sales cycle distribution
+  const cycleData = useMemo(() => {
+    const completedDeals = deals.filter(d => d.stage === 'closed_won' && d.stageHistory.length > 0);
+    const buckets = [
+      { label: '0-30d', min: 0, max: 30, count: 0 },
+      { label: '31-60d', min: 31, max: 60, count: 0 },
+      { label: '61-90d', min: 61, max: 90, count: 0 },
+      { label: '90+d', min: 91, max: Infinity, count: 0 },
+    ];
+    completedDeals.forEach(d => {
+      const totalDays = d.stageHistory.reduce((s, h) => s + h.daysInStage, 0);
+      const bucket = buckets.find(b => totalDays >= b.min && totalDays <= b.max);
+      if (bucket) bucket.count++;
+    });
+    return buckets;
+  }, [deals]);
 
   // Rep Leaderboard
   const leaderboard = team
@@ -65,11 +92,27 @@ export default function Reports() {
     { name: 'Lost', value: lostDeals.length, color: '#ef4444' },
   ];
 
+  // Deal score distribution
+  const scoreDistribution = useMemo(() => {
+    const buckets = [
+      { label: '0-25', min: 0, max: 25, count: 0, color: '#ef4444' },
+      { label: '26-50', min: 26, max: 50, count: 0, color: '#f59e0b' },
+      { label: '51-75', min: 51, max: 75, count: 0, color: '#3b82f6' },
+      { label: '76-100', min: 76, max: 100, count: 0, color: '#22c55e' },
+    ];
+    filteredDeals.forEach(d => {
+      const bucket = buckets.find(b => d.score >= b.min && d.score <= b.max);
+      if (bucket) bucket.count++;
+    });
+    return buckets;
+  }, [filteredDeals]);
+
   const handleExport = () => {
     const data = {
       summary: { wonRevenue, lostRevenue, pipelineRevenue, forecast, winRate },
+      velocityByStage,
       leaderboard: leaderboard.map(l => ({ name: l.name, revenue: l.revenue, dealsWon: l.dealsWon })),
-      deals: filteredDeals.map(d => ({ title: d.title, value: d.value, stage: d.stage, contact: d.contactName })),
+      deals: filteredDeals.map(d => ({ title: d.title, value: d.value, stage: d.stage, contact: d.contactName, score: d.score })),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -121,7 +164,40 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Charts */}
+      {/* Pipeline Velocity Analysis */}
+      <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Clock size={16} className="text-blue-400" />
+          <h3 className="text-sm font-semibold text-white">Pipeline Velocity Analysis</h3>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          {velocityByStage.map(v => (
+            <div key={v.stage} className={`p-4 rounded-lg border ${v.isBottleneck ? 'border-amber-500/50 bg-amber-500/5' : 'border-slate-700 bg-slate-900/50'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-slate-400">{v.stage}</span>
+                {v.isBottleneck && <AlertTriangle size={14} className="text-amber-400" />}
+              </div>
+              <p className={`text-2xl font-bold ${v.isBottleneck ? 'text-amber-400' : 'text-white'}`}>{v.avgDays}<span className="text-xs text-slate-500 ml-1">days</span></p>
+              <p className="text-xs text-slate-500">{v.count} transitions</p>
+              {v.isBottleneck && <p className="text-xs text-amber-400 mt-1">Bottleneck detected</p>}
+            </div>
+          ))}
+        </div>
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={velocityByStage}>
+            <XAxis dataKey="stage" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+            <YAxis tick={{ fill: '#94a3b8', fontSize: 12 }} />
+            <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }} />
+            <Bar dataKey="avgDays" name="Avg Days">
+              {velocityByStage.map((v, i) => (
+                <Cell key={i} fill={v.isBottleneck ? '#f59e0b' : '#3b82f6'} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
           <h3 className="text-sm font-semibold text-white mb-4">Revenue by Month ($K)</h3>
@@ -153,6 +229,35 @@ export default function Reports() {
         </div>
       </div>
 
+      {/* Score Distribution + Sales Cycle */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+          <h3 className="text-sm font-semibold text-white mb-4">Deal Score Distribution</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={scoreDistribution}>
+              <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+              <YAxis tick={{ fill: '#94a3b8', fontSize: 12 }} />
+              <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }} />
+              <Bar dataKey="count" name="Deals">
+                {scoreDistribution.map((b, i) => <Cell key={i} fill={b.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+          <h3 className="text-sm font-semibold text-white mb-4">Sales Cycle Distribution</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={cycleData}>
+              <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+              <YAxis tick={{ fill: '#94a3b8', fontSize: 12 }} />
+              <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }} />
+              <Bar dataKey="count" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="Deals" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
       {/* Rep Leaderboard */}
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
         <h3 className="text-sm font-semibold text-white mb-4">Sales Rep Leaderboard</h3>
@@ -168,7 +273,7 @@ export default function Reports() {
               </div>
               <div className="text-right">
                 <p className="text-sm font-bold text-green-400">{formatCurrency(rep.revenue)}</p>
-                <p className="text-xs text-slate-400">revenue</p>
+                <p className="text-xs text-slate-400">{rep.quotaAttainment}% of quota</p>
               </div>
               <div className="w-32">
                 <div className="w-full bg-slate-700 rounded-full h-2">
